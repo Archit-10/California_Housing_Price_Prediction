@@ -1,0 +1,288 @@
+
+import sklearn
+import numpy as np
+import pandas as pd
+
+np.random.seed(42)              # If seed value is same                                                                                          
+np.random.random_integers(10)   #it will keep on generating 
+                                #same random no ---Pseudo random no.
+
+%matplotlib inline
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+
+mpl.rc('axes',labelsize=14)
+mpl.rc('xtick',labelsize=12)
+mpl.rc('ytick',labelsize=12)
+
+import warnings         # To avoid any non-essential warnings --- to ensure process is clean.
+warnings.filterwarnings(action="ignore",message="^internal gelsd")
+
+!head /cxldata/datasets/project/housing/housing.csv
+
+!tail /cxldata/datasets/project/housing/housing.csv
+
+!ls /cxldata/datasets/project
+
+HOUSING_PATH = "/cxldata/datasets/project/housing/housing.csv"  # Absolute path of the datset stored in a variable.
+
+housing=pd.read_csv(HOUSING_PATH) # to load the dataset in housing variable
+housing.head()
+
+housing
+
+housing.info()    # Gives how many non-null values are there
+
+housing.describe()
+
+housing.hist(bins=50,figsize=(20,15))
+plt.show()
+
+housing["median_income"].hist(bins=50,figsize=(20,15))
+plt.show()
+
+# We have added a new column income_cat in housing dataset.
+#Basically converted continuous to categorical variables.
+housing["income_cat"]=pd.cut(housing["median_income"],bins=[0.,1.5,3.0,4.5,6.,np.inf],labels=[1,2,3,4,5])
+housing["income_cat"].hist()
+
+housing.corr()["median_house_value"]       #median_income is highly positive correlated
+# median_income is highly important feature here
+
+# If the most important feature(here median_income - most positively correlated) is skewed in nature
+# then go for stratified sampling method, else simple random sampling.
+# Here we are forming strata based on income_cat column that was created
+
+from sklearn.model_selection import StratifiedShuffleSplit
+split=StratifiedShuffleSplit(n_splits=1,test_size=0.2,random_state=42)
+for train_index, test_index in split.split(housing,housing["income_cat"]):  # Strata based on income_cat column that was added
+    strat_train_set=housing.loc[train_index]
+    strat_test_set=housing.loc[test_index]
+    
+ # If value of random_state is been fixed then every time will get same
+# rows of datasets in test set and training set.
+
+# Now we will drop the income_cat column that was added from both train and test dataset
+for set_ in(strat_train_set,strat_test_set):
+    set_.drop("income_cat",axis=1,inplace=True)
+
+housing.shape, strat_train_set.shape, strat_test_set.shape
+
+# Earlier housing var represent whole dataset but now only 80% training dataset
+housing = strat_train_set.copy()
+
+# Plotting the scatter plot using Matplotlib
+import matplotlib.image as mpimg
+california_img=mpimg.imread('/cxldata/datasets/project/housing/california.png')
+ax = housing.plot(kind="scatter", x="longitude", y="latitude", figsize=(10,7),
+                       s=housing['population']/100, label="Population",
+                       c="median_house_value", cmap=plt.get_cmap("jet"),
+                       colorbar=False, alpha=0.4,
+                      )
+plt.imshow(california_img, extent=[-124.55, -113.80, 32.45, 42.05], alpha=0.5,
+           cmap=plt.get_cmap("jet"))
+plt.ylabel("Latitude", fontsize=14)
+plt.xlabel("Longitude", fontsize=14)
+
+prices = housing["median_house_value"]
+tick_values = np.linspace(prices.min(), prices.max(), 11)
+cbar = plt.colorbar(ticks=tick_values/prices.max())
+cbar.ax.set_yticklabels(["$%dk"%(round(v/1000)) for v in tick_values], fontsize=14)
+cbar.set_label('Median House Value', fontsize=16)
+
+plt.legend(fontsize=16)
+plt.show()
+
+# Added 3 new columns - features
+
+housing["rooms_per_household"] = housing["total_rooms"]/housing["households"]
+housing["bedrooms_per_room"] = housing["total_bedrooms"]/housing["total_rooms"]
+housing["population_per_household"]=housing["population"]/housing["households"]
+
+corr_matrix = housing.corr()
+
+corr_matrix["median_house_value"].sort_values(ascending=False)
+
+
+from pandas.plotting import scatter_matrix
+
+attributes = ["median_house_value", "median_income", "total_rooms",
+              "housing_median_age"]
+scatter_matrix(housing[attributes], figsize=(12, 8))
+
+housing.describe()
+
+# Will drop the median_house_value which we will put in separate var label
+#coz we feed the algo data separately - features and label.
+housing=strat_train_set.drop("median_house_value",axis=1)
+
+# drop doesn't delete the column permanently, it just returns the dataset without that column
+
+housing_labels=strat_train_set["median_house_value"].copy()
+
+from sklearn.impute import SimpleImputer
+imputer = SimpleImputer(strategy="median")   # We will fill with median
+housing_num = housing.drop("ocean_proximity", axis=1)  # Removing categorical variable
+imputer.fit(housing_num)
+
+X = imputer.transform(housing_num)
+housing_tr = pd.DataFrame(X, columns=housing_num.columns,
+                      index=housing.index)
+
+housing_tr
+
+housing_cat=housing[["ocean_proximity"]]
+housing_cat.head(10)
+
+# Since ML Algo understands numbers not text so here we are converting categorical variable to nummerica
+
+from sklearn.preprocessing import OneHotEncoder
+cat_encoder=OneHotEncoder()
+housing_cat_1hot=cat_encoder.fit_transform(housing_cat)
+housing_cat_1hot
+
+print(housing_cat_1hot)
+
+housing_cat_1hot.toarray()
+
+housing_cat_1hot[:10].toarray()
+
+# Here we combined all the steps: Fill in missing vlues,OneHotEncoding,Remove and add categorical var again to dataset
+
+from sklearn.base import BaseEstimator, TransformerMixin
+
+rooms_ix, bedrooms_ix, population_ix, households_ix = 3, 4, 5, 6
+
+class CombinedAttributesAdder(BaseEstimator, TransformerMixin):
+    def __init__(self, add_bedrooms_per_room=True):
+        self.add_bedrooms_per_room = add_bedrooms_per_room
+    def fit(self, X, y=None):
+        return self
+    def transform(self, X):
+        rooms_per_household = X[:, rooms_ix] / X[:, households_ix]
+        population_per_household = X[:, population_ix] / X[:, households_ix]
+        if self.add_bedrooms_per_room:
+            bedrooms_per_room = X[:, bedrooms_ix] / X[:, rooms_ix]
+            return np.c_[X, rooms_per_household, population_per_household,
+                         bedrooms_per_room]
+        else:
+            return np.c_[X, rooms_per_household, population_per_household]
+
+attr_adder = CombinedAttributesAdder(add_bedrooms_per_room=False)
+housing_extra_attribs = attr_adder.transform(housing.values)
+
+col_names = "total_rooms", "total_bedrooms", "population", "households"
+rooms_ix, bedrooms_ix, population_ix, households_ix = [
+    housing.columns.get_loc(c) for c in col_names]
+
+housing_extra_attribs = pd.DataFrame(
+    housing_extra_attribs,
+    columns=list(housing.columns)+["rooms_per_household", "population_per_household"],
+    index=housing.index)
+housing_extra_attribs.head()
+
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+num_pipeline = Pipeline([
+        ('imputer', SimpleImputer(strategy="median")),
+        ('attribs_adder', CombinedAttributesAdder()),
+        ('std_scaler', StandardScaler()),
+    ])
+
+housing_num_tr = num_pipeline.fit_transform(housing_num)
+
+from sklearn.compose import ColumnTransformer
+
+num_attribs = list(housing_num)
+cat_attribs = ["ocean_proximity"]
+
+full_pipeline = ColumnTransformer([
+        ("num", num_pipeline, num_attribs),
+        ("cat", OneHotEncoder(), cat_attribs),
+    ])
+
+housing_prepared = full_pipeline.fit_transform(housing)
+
+# Every row has now been converted to numbers in the dataset
+housing_prepared
+
+from sklearn.tree import DecisionTreeRegressor
+tree_reg = DecisionTreeRegressor(random_state=42)
+tree_reg.fit(housing_prepared, housing_labels)
+
+# If rmse vvalue is 0.0 then there is chances that machine has memorized everything(overfitting case)
+from sklearn.metrics import mean_squared_error 
+housing_predictions = tree_reg.predict(housing_prepared)
+tree_mse = mean_squared_error(housing_labels, housing_predictions)
+tree_rmse = np.sqrt(tree_mse)
+tree_rmse
+
+from sklearn.ensemble import RandomForestRegressor
+forest_reg = RandomForestRegressor(n_estimators=30, random_state=42)
+forest_reg.fit(housing_prepared, housing_labels)
+
+housing_predictions = forest_reg.predict(housing_prepared)
+
+forest_mse = mean_squared_error(housing_labels, housing_predictions)
+forest_rmse = np.sqrt(forest_mse)
+forest_rmse
+
+# Cross Validation helps to compare the performance of two or more models
+
+def display_scores(scores):
+    print("Scores:", scores)
+    print("Mean:", scores.mean())
+    print("Standard deviation:", scores.std())
+    
+from sklearn.model_selection import cross_val_score 
+
+scores = cross_val_score(tree_reg, housing_prepared, housing_labels,
+                         scoring="neg_mean_squared_error", cv=10)
+tree_rmse_scores = np.sqrt(-scores)
+display_scores(tree_rmse_scores)
+
+forest_scores = cross_val_score(forest_reg, housing_prepared, housing_labels,
+                                scoring="neg_mean_squared_error", cv=10)
+forest_rmse_scores = np.sqrt(-forest_scores)
+display_scores(forest_rmse_scores)
+
+# Grid Search takes different values of parameters that Random Forest was taking
+# and finds out the best optimum value of the hyperparameters.
+
+from sklearn.model_selection import GridSearchCV
+
+param_grid = [
+    {'n_estimators': [3, 10, 30], 'max_features': [2, 4, 6, 8]},
+    {'bootstrap': [False], 'n_estimators': [3, 10], 'max_features': [2, 3, 4]},
+  ]
+
+forest_reg = RandomForestRegressor(random_state=42)
+grid_search = GridSearchCV(forest_reg, param_grid, cv=5,
+                           scoring='neg_mean_squared_error',
+                           return_train_score=True)
+grid_search.fit(housing_prepared, housing_labels)
+
+
+
+grid_search.best_params_
+
+grid_search.best_estimator_
+
+cvres = grid_search.cv_results_
+for mean_score, params in zip(cvres["mean_test_score"], cvres["params"]):
+    print(np.sqrt(-mean_score), params)
+
+final_model= grid_search.best_estimator_
+# Drop the label that our model will be predicting and put label in y_test
+X_test = strat_test_set.drop("median_house_value", axis=1)
+y_test=strat_test_set["median_house_value"].copy()
+
+X_test_prepared = full_pipeline.transform(X_test)
+final_predictions = final_model.predict(X_test_prepared)
+
+final_mse = mean_squared_error(y_test, final_predictions)
+final_rmse = np.sqrt(final_mse)
+final_rmse
+
+# The above is the final rmse value which is low
